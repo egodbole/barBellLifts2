@@ -1,0 +1,100 @@
+---
+title: "Do you even lift? In any case, know if you're doing it properly"
+author: "EGo"
+date: "06/06/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Loading relevant libraries
+```{r libraries, results='hide'}
+library(caret)
+library(tidyverse)
+library(ranger)
+```
+
+# Step 1: Get the data.
+- We have the URLs. You know the drill:
+```{r getData, cache=TRUE}
+urlTrain <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+urlTest <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+if(!file.exists("pmlTrain.csv")){
+        download.file(urlTrain,
+                      destfile="pmlTrain.csv")
+}
+
+if(!file.exists("pmlTest.csv")){
+        download.file(urlTest,
+                      destfile="pmlTest.csv")
+}
+
+pmlTrain <- read.csv("pmlTrain.csv",
+                     header=TRUE)
+pmlTest <- read.csv("pmlTest.csv",
+                    header=TRUE)
+```
+
+#Step 2: Clean the data
+- There are many NA columns. Though not entirely NA, they are mostly NA with only about 2% non-NAs.
+```{r removeNAs}
+NAs <- which(is.na(pmlTrain[1, ]))
+training <- pmlTrain[, -NAs]
+```
+- Near zero variance predictors are mostly the same for each outcome value; they don't add much. Let's exclude them too.
+```{r removeNZVs, cache=TRUE}
+nzv <- nearZeroVar(training)
+training <- training[, -nzv]
+```
+- The first few columns aren't adding usable info. They're metadata. Off with them!
+```{r trimVars}
+training <- training %>% select(-(1:6))
+```
+- Some columns are of the integer class. Let's change them to numerics. It's easier to deal with that.
+```{r makeNumeric}
+print(sapply(training, class))
+nonNumerics <- c(1, 5, 9:14, 18, 22:27, 31, 35:39, 44, 48:51)
+for(i in nonNumerics){
+        training[, i] <- as.numeric(training[, i])
+}
+```
+
+# Step 3: Fit the model
+- We have a lot of variables still. Let's whittle them down using PCA—capturing just 80% variance; we don't want to overfit.
+```{r PCA}
+preProc <- preProcess(training[, -53], method="pca", thresh=0.8)
+trainPC <- predict(preProc, training[, -53])
+```
+- A classification prediction problem? Random forest sounds good. Using the {ranger} method here.
+```{r fitModel, cache=TRUE}
+set.seed(2020)
+ptm2 <- proc.time()
+fit <- train(x=trainPC, y=training$classe, method="ranger",
+              trControl=trainControl(method="repeatedcv", verboseIter=F))
+confusionMatrix(predict(fit, trainPC), training$classe)$overall
+print(proc.time()-ptm2)
+```
+- We have cross-validated. Let's look at the OOB error. It's quite low.
+```{r OOBerror}
+fit$finalModel
+```
+
+# Step 4: Predict on the test set
+- We need to preprocess the testing set first
+```{r testProcess}
+testing <- pmlTest[, -NAs]
+testing <- testing[, -nzv]
+testing <- testing %>% select(-(1:6))
+nonNumerics <- c(1, 5, 9:14, 18, 22:27, 31, 35:39, 44, 48:51)
+for(i in nonNumerics){
+        testing[, i] <- as.numeric(testing[, i])
+}
+testPC <- predict(preProc, testing[, -53])
+```
+- And finally, we can predict!
+```{r predict}
+print(predict(fit, testPC))
+```
